@@ -1,0 +1,70 @@
+name: Atualizar dados do TSE
+
+# Regenera public/data com os arquivos do TSE e commita se algo mudou;
+# o push na main dispara o deploy da Vercel. Ativo até a totalização do
+# 2º turno (25/10/2026) — depois disso o job encerra sem fazer nada.
+on:
+  schedule:
+    - cron: '0 */3 * * *'          # a cada 3 h
+    - cron: '*/20 20-23 25 10 *'   # noite do 2º turno (17h–21h BRT), a cada 20 min
+    - cron: '*/20 0-3 26 10 *'     # 21h–01h BRT
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: atualizar-dados
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Verifica janela
+        id: janela
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%Y%m%d)" -gt 20261027 ]; then
+            echo "ativo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ativo=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.janela.outputs.ativo == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.janela.outputs.ativo == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Gera dados
+        if: steps.janela.outputs.ativo == 'true'
+        run: |
+          npm ci
+          npm run data
+          npm run build
+
+      - name: Commit e push
+        if: steps.janela.outputs.ativo == 'true'
+        run: |
+          git add public
+          # meta.processadoEm muda a cada execução; só commita se houver outra diferença
+          sem_mudanca=$(node -e '
+            const { execSync } = require("node:child_process")
+            const arqs = execSync("git diff --cached --name-only").toString().trim().split("\n").filter(Boolean)
+            const strip = (s) => { const m = JSON.parse(s); delete m.processadoEm; return JSON.stringify(m) }
+            const meta = "public/data/meta.json"
+            const so = arqs.every((f) => f === meta) &&
+              (!arqs.length || strip(execSync(`git show HEAD:${meta}`).toString()) === strip(require("node:fs").readFileSync(meta, "utf8")))
+            console.log(so)')
+          if [ "$sem_mudanca" = "true" ]; then
+            echo "Sem mudanças nos dados."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Atualiza dados do TSE ($(date -u +'%d/%m/%Y %H:%M') UTC)"
+          git push
