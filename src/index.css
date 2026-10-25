@@ -282,5 +282,20 @@ tr.clickable { cursor: pointer; }
 .prog { height: 8px; background: var(--surface-2); border-radius: 4px; overflow: hidden; }
 .prog > div { height: 100%; border-radius: 4px; }
 
+/* ---------- 2º turno ao vivo */
+.live { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 4px 12px; font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); }
+.live.ao-vivo i { background: #e34948; animation: pulso 1.6s ease-in-out infinite; }
+.live.aguardando i { background: #fab219; }
+.live.final i { background: #0ca30c; }
+@keyframes pulso { 50% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .live.ao-vivo i { animation: none; } }
+.link-btn { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-size: inherit; text-decoration: underline; }
+.duelo-nome { font-weight: 600; font-size: 0.92rem; }
+.duelo-nome.g { font-size: 1.05rem; }
+.duelo-pct { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.duelo-pct.g { font-size: 2.6rem; }
+.duelo-barra { position: relative; }
+.duelo-barra .meio { position: absolute; left: 50%; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--text); opacity: 0.55; pointer-events: none; }
 .callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 6px; font-size: 0.9rem; }
 footer { color: var(--text-3); font-size: 0.8rem; text-align: center; padding: 24px; }
