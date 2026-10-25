@@ -25,7 +25,7 @@ npm run data      # baixa do TSE/IBGE (~1,5 GB de zips na 1ª vez) e regenera pu
 
 - Os arquivos brutos ficam em `.cache/tse` (ignorado pelo git). Para usar outra pasta: `TSE_CACHE=/caminho npm run data`.
 - Fontes: Portal de Dados Abertos do TSE (`consulta_cand`, `votacao_candidato_munzona`, `consulta_vagas`, `votacao_secao_BR` para Presidente), API de divulgação `resultados.tse.jus.br` (comparecimento/abstenção e 2º turno) e API de malhas do IBGE.
-- `public/data/locais/{UF}.json` liga cada seção ao seu local de votação (da votação por seção; bairro e coordenadas vêm do cadastro `eleitorado_local_votacao` quando o CDN permite o download).
+- `public/data/locais/{UF}.json` liga cada seção ao seu local de votação, com bairro, coordenadas, eleitores e seção principal das agregadas, a partir do cadastro `eleitorado_local_votacao` (2º turno). Se o CDN não liberar o download, usa os locais da votação por seção do 1º turno.
 - A API de divulgação aplica limite de taxa (HTTP 429). O script espaça as requisições, faz backoff e guarda as respostas em cache.
 - **2º turno (25/10/2026):** rode `npm run data` de novo depois da totalização. O script consulta as eleições 6258/6260 e atualiza a situação de Presidente e dos governadores. Para a votação municipal do 2º turno, apague `.cache/tse/votacao_secao_2026_BR*` e `.cache/tse/consulta_cand_2026*` para baixar as versões novas.
 

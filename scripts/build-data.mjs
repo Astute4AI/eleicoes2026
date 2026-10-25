@@ -386,9 +386,9 @@ async function main() {
   })
 
   // ---------------------------------------------------- locais/{UF}.json (local de votação de cada seção)
-  await completarLocais(presidente.locais)
+  const locais = (await carregarLocaisCadastro()) ?? presidente.locais
   for (const uf of UFS) {
-    const loc = presidente.locais[uf]
+    const loc = locais[uf]
     if (loc) await writeJSON(path.join(OUT, 'locais', `${uf}.json`), { locais: loc.lista, secoes: loc.secoes })
   }
 
@@ -518,8 +518,11 @@ async function carregarPresidente(cands, municipios, munIndex) {
   return { resumo, municipios: porMun, locais }
 }
 
-/** Associa a seção (município TSE + zona + seção) ao seu local de votação. */
-function registrarLocal(locais, r, dados) {
+/**
+ * Associa a seção (município TSE + zona + seção) ao seu local de votação.
+ * `extra` ([eleitores, seção principal]) transforma o valor da seção em [local, ...extra].
+ */
+function registrarLocal(locais, r, dados, extra) {
   const loc = (locais[r.SG_UF] ??= { idx: new Map(), lista: [], secoes: {} })
   const zona = (loc.secoes[`${+r.CD_MUNICIPIO}-${+r.NR_ZONA}`] ??= {})
   const k = `${+r.CD_MUNICIPIO}|${+r.NR_ZONA}|${+r.NR_LOCAL_VOTACAO}`
@@ -529,37 +532,40 @@ function registrarLocal(locais, r, dados) {
     loc.idx.set(k, i)
     loc.lista.push(dados)
   }
-  zona[+r.NR_SECAO] ??= i
-  return loc.lista[i]
+  zona[+r.NR_SECAO] ??= extra ? [i, ...extra] : i
 }
 
 /**
- * Completa os locais com bairro e coordenadas do cadastro de locais de votação
- * (eleitorado_local_votacao) e inclui as seções agregadas, que não aparecem na
- * votação por seção. Opcional: se o arquivo não puder ser baixado, segue sem ele.
+ * Locais de votação do cadastro eleitorado_local_votacao (2º turno quando já
+ * publicado): endereço, bairro, coordenadas, eleitores e seções agregadas.
+ * Retorna null se o arquivo não puder ser baixado — aí valem os locais da votação por seção.
  */
-async function completarLocais(locais) {
+async function carregarLocaisCadastro() {
   let dir
   try {
     dir = await datasetDir(`eleitorado_local_votacao_${ANO}`, 'eleitorado_locais_votacao')
   } catch (e) {
-    log('cadastro de locais de votação indisponível — sem bairro/coordenadas:', e.message)
-    return
+    log('cadastro de locais de votação indisponível — usando os locais da votação por seção:', e.message)
+    return null
   }
-  const csv = fs.readdirSync(dir).find((f) => f.endsWith('.csv'))
-  let n = 0
-  for await (const r of readCsv(path.join(dir, csv))) {
-    if (r.NR_TURNO && r.NR_TURNO !== '1') continue
-    if (!r.SG_UF || r.SG_UF === 'ZZ') continue
-    const item = registrarLocal(locais, r, [+r.NR_LOCAL_VOTACAO, r.NM_LOCAL_VOTACAO, r.DS_ENDERECO])
-    if (item.length > 3) continue
-    const lat = +String(r.NR_LATITUDE).replace(',', '.')
-    const lon = +String(r.NR_LONGITUDE).replace(',', '.')
-    const coord = lat && lon && lat !== -1 && lon !== -1
-    item.push(nulo(r.NM_BAIRRO) ? '' : r.NM_BAIRRO, coord ? Math.round(lat * 1e5) / 1e5 : null, coord ? Math.round(lon * 1e5) / 1e5 : null)
-    n++
+  const porTurno = { 1: {}, 2: {} }
+  const coord = (v) => {
+    const n = +String(v).replace(',', '.')
+    return n && n !== -1 ? Math.round(n * 1e5) / 1e5 : null
   }
-  log('locais de votação completados:', n)
+  for await (const r of readCsv(path.join(dir, `eleitorado_local_votacao_${ANO}_BRASIL.csv`))) {
+    const locais = porTurno[r.NR_TURNO]
+    if (!locais || !r.SG_UF || r.SG_UF === 'ZZ') continue
+    const principal = +r.NR_SECAO_PRINCIPAL > 0 ? +r.NR_SECAO_PRINCIPAL : 0
+    registrarLocal(
+      locais, r,
+      [+r.NR_LOCAL_VOTACAO, r.NM_LOCAL_VOTACAO, r.DS_ENDERECO, nulo(r.NM_BAIRRO) ? '' : r.NM_BAIRRO, coord(r.NR_LATITUDE), coord(r.NR_LONGITUDE)],
+      [+r.QT_ELEITOR_SECAO || 0, principal],
+    )
+  }
+  const turno = Object.keys(porTurno[2]).length ? 2 : 1
+  log(`locais de votação do cadastro (${turno}º turno) carregados`)
+  return porTurno[turno]
 }
 
 /** Tenta carregar o 2º turno (Presidente e Governador) — retorna null até haver divulgação. */

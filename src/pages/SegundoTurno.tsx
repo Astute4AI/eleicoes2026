@@ -367,10 +367,19 @@ function ZonasSecoes({ uf, mun, municipio }: { uf: string; mun: string; municipi
   )
 }
 
-/** public/data/locais/{UF}.json: locais [nº, nome, endereço, bairro?, lat?, lon?] e, por "mun-zona", seção → índice do local. */
+/**
+ * public/data/locais/{UF}.json: locais [nº, nome, endereço, bairro?, lat?, lon?] e, por "mun-zona",
+ * seção → índice do local ou, com o cadastro de locais, [índice, eleitores, seção principal (0 se não agregada)].
+ */
 interface LocaisUF {
   locais: [number, string, string, string?, (number | null)?, (number | null)?][]
-  secoes: Record<string, Record<string, number>>
+  secoes: Record<string, Record<string, number | [number, number, number]>>
+}
+
+function infoSecao(daZona: LocaisUF['secoes'][string] | undefined, s: string) {
+  const v = daZona?.[+s]
+  if (v == null) return null
+  return Array.isArray(v) ? { i: v[0], eleitores: v[1], principal: v[2] } : { i: v, eleitores: null, principal: 0 }
 }
 
 function linkMapa(l: LocaisUF['locais'][number], municipio: string, uf: string) {
@@ -398,12 +407,12 @@ function SecoesZona({ uf, mun, municipio, zona, secoes }: { uf: string; mun: str
   const totalizadas = secoes.filter((s) => vivo.dados[s]?.final).length
 
   const daZona = loc.data?.secoes[`${+mun}-${+zona}`]
-  const localDe = (s: string) => (daZona?.[+s] != null ? daZona[+s] : null)
+  const localDe = (s: string) => infoSecao(daZona, s)?.i ?? null
   // locais da zona com as seções de cada um
   const locais = useMemo(() => {
     const m = new Map<number, number[]>()
     if (daZona) for (const s of secoes) {
-      const i = daZona[+s]
+      const i = infoSecao(daZona, s)?.i
       if (i != null) m.set(i, [...(m.get(i) ?? []), +s])
     }
     return [...m].map(([i, ns]) => ({ i, l: loc.data!.locais[i], ns: ns.sort((x, y) => x - y) })).sort((x, y) => x.ns[0] - y.ns[0])
@@ -412,6 +421,7 @@ function SecoesZona({ uf, mun, municipio, zona, secoes }: { uf: string; mun: str
   const localSel = sel ? localDe(sel) : null
   const info = localSel != null ? locais.find((x) => x.i === localSel) : undefined
   const dSel = sel ? vivo.dados[sel] : undefined
+  const iSel = sel ? infoSecao(daZona, sel) : null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -422,9 +432,11 @@ function SecoesZona({ uf, mun, municipio, zona, secoes }: { uf: string; mun: str
       <div className="secoes">
         {secoes.map((s) => {
           const d = vivo.dados[s]
-          const cls = ['secao', d?.final && 'ok', s === sel && 'sel', s !== sel && localSel != null && localDe(s) === localSel && 'mesmo'].filter(Boolean).join(' ')
+          const principal = infoSecao(daZona, s)?.principal
+          const cls = ['secao', d?.final && 'ok', principal && 'agreg', s === sel && 'sel', s !== sel && localSel != null && localDe(s) === localSel && 'mesmo'].filter(Boolean).join(' ')
+          const situacao = principal ? `agregada à seção ${principal}` : d ? d.situacao || 'sem situação' : 'boletim não publicado'
           return (
-            <button key={s} className={cls} onClick={() => setSel(s === sel ? null : s)} title={`Seção ${+s}: ${d ? d.situacao || 'sem situação' : 'boletim não publicado (aguardando ou seção agregada)'}${d?.recebida ? ` · boletim recebido em ${d.recebida}` : ''}`}>
+            <button key={s} className={cls} onClick={() => setSel(s === sel ? null : s)} title={`Seção ${+s}: ${situacao}${d?.recebida ? ` · boletim recebido em ${d.recebida}` : ''}`}>
               {+s}
             </button>
           )
@@ -432,14 +444,17 @@ function SecoesZona({ uf, mun, municipio, zona, secoes }: { uf: string; mun: str
       </div>
       <div className="legend">
         <span><i className="sw secao-sw ok" />Totalizada</span>
-        <span><i className="sw secao-sw" />Aguardando ou sem boletim próprio (seção agregada)</span>
+        <span><i className="sw secao-sw" />Aguardando</span>
+        <span><i className="sw secao-sw agreg" />Agregada (votos na seção principal)</span>
         <span className="tiny">Clique numa seção para ver onde ela fica.</span>
       </div>
 
       {sel && (
         <div className="callout">
-          <b>Seção {+sel}</b> · zona {+zona} — {dSel ? dSel.situacao || 'sem situação' : 'boletim não publicado'}
+          <b>Seção {+sel}</b> · zona {+zona} —{' '}
+          {iSel?.principal ? `agregada à seção ${iSel.principal}; os votos entram no boletim dela` : dSel ? dSel.situacao || 'sem situação' : 'boletim não publicado'}
           {dSel?.recebida && ` · boletim recebido em ${dSel.recebida}`}
+          {iSel?.eleitores ? ` · ${num(iSel.eleitores)} eleitores` : ''}
           {info ? (
             <LocalVotacao l={info.l} ns={info.ns} municipio={municipio} uf={uf} />
           ) : (
