@@ -1,12 +1,29 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CORES_CAT, Legend, StackBar } from '../components/Bars'
 import { BrazilMap } from '../components/BrazilMap'
 import { TipRow } from '../components/Tooltip'
 import { Card, Stat } from '../components/Ui'
-import { useData } from '../data/DataContext'
+import { useData, useJSON } from '../data/DataContext'
 import { UFS } from '../data/types'
-import { num, pct, share } from '../lib/format'
-import { INICIO_APURACAO, urlGovernador, urlPresidente, useAgora, useAoVivo, type AoVivo, type CandAoVivo, type ResultadoAoVivo } from '../lib/aoVivo'
+import { num, pct, share, titulo } from '../lib/format'
+import {
+  INICIO_APURACAO,
+  INTERVALO_MS,
+  parseSecao,
+  URL_MUNICIPIOS,
+  urlGovernador,
+  urlPresidente,
+  urlPresidenteMun,
+  urlSecoes,
+  urlsSecoes,
+  useAgora,
+  useAoVivo,
+  type AoVivo,
+  type CandAoVivo,
+  type MunicipiosTSE,
+  type ResultadoAoVivo,
+  type SecoesTSE,
+} from '../lib/aoVivo'
 
 const ABR_PRESIDENTE = [...Object.keys(UFS), 'ZZ']
 
@@ -168,74 +185,212 @@ function Duelo({ r, ordem, nota, grande }: { r: ResultadoAoVivo; ordem: Ordem; n
 }
 
 function PresidentePorUF({ vivo, br, ordem }: { vivo: AoVivo; br: ResultadoAoVivo; ordem: Ordem }) {
+  const [sel, setSel] = useState<string | null>(null)
+  const detalhe = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (sel) detalhe.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [sel])
+
   const [a, b] = ordem(br.candidatos)
   if (!a || !b) return null
   const uf = (abr: string) => vivo.dados[`P-${abr}`]
-  const de = (r: ResultadoAoVivo | null | undefined, sq: string) => r?.candidatos.find((c) => c.sq === sq)
-
-  // cor do líder na UF, mais intensa quanto maior a vantagem
-  const fill = (abr: string) => {
-    const r = uf(abr)
-    if (!r?.validos) return undefined
-    const [l, s] = r.candidatos
-    const margem = l.pct - (s?.pct ?? 0)
-    const forca = margem < 2 ? 30 : margem < 5 ? 50 : margem < 10 ? 72 : margem < 20 ? 88 : 100
-    return `color-mix(in srgb, ${CORES_CAT[l.sq === a.sq ? 0 : 1]} ${forca}%, var(--map-empty))`
-  }
 
   return (
+    <>
+      <div className="grid g2" style={{ alignItems: 'start' }}>
+        <Card title="Quem lidera em cada estado" sub="Cor do candidato à frente; mais intensa quanto maior a vantagem (até 2, 5, 10, 20 p.p. ou mais). Clique num estado para ver os municípios e as seções.">
+          <BrazilMap
+            nivel="uf"
+            labels
+            fill={(abr) => corLider(uf(abr), a.sq)}
+            onSelect={setSel}
+            selected={sel}
+            tooltip={(abr) => {
+              const r = uf(abr)
+              return (
+                <>
+                  <div className="t">{UFS[abr]?.nome}</div>
+                  {[a, b].map((c, i) => <TipRow key={c.sq} color={CORES_CAT[i]} label={c.urna} value={pct(deCand(r, c.sq)?.pct ?? 0)} />)}
+                  <div className="tiny">{r ? `${pct(r.pctTotalizado)} das seções totalizadas` : 'Sem dados'}</div>
+                </>
+              )
+            }}
+          />
+          <Legend items={[a, b].map((c, i) => ({ key: c.urna, cor: CORES_CAT[i] }))} />
+        </Card>
+        <Card title="Resultado por UF">
+          <div className="table-wrap" style={{ maxHeight: 620 }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>UF</th>
+                  <th className="num">Totalizado</th>
+                  <th className="num">{a.urna}</th>
+                  <th className="num">{b.urna}</th>
+                  <th className="num">Válidos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {ABR_PRESIDENTE.map((abr) => {
+                  const r = uf(abr)
+                  const lider = r?.validos ? r.candidatos[0]?.sq : null
+                  return (
+                    <tr key={abr} className={UFS[abr] ? 'clickable' : undefined} onClick={() => UFS[abr] && setSel(abr)}>
+                      <td>{UFS[abr]?.nome ?? 'Exterior'}</td>
+                      <td className="num">{r ? pct(r.pctTotalizado) : '—'}</td>
+                      {[a, b].map((c) => (
+                        <td key={c.sq} className="num" style={{ fontWeight: lider === c.sq ? 700 : 400 }}>
+                          {r ? pct(deCand(r, c.sq)?.pct ?? 0) : '—'}
+                        </td>
+                      ))}
+                      <td className="num">{r ? num(r.validos) : '—'}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      </div>
+      {sel && (
+        <div ref={detalhe} style={{ scrollMarginTop: 72 }}>
+          <MunicipiosAoVivo key={sel} uf={sel} a={a} b={b} onFechar={() => setSel(null)} />
+        </div>
+      )}
+    </>
+  )
+}
+
+/** Cor do líder, mais intensa quanto maior a vantagem; `a` é o 1º colocado do 1º turno (CORES_CAT[0]). */
+function corLider(r: ResultadoAoVivo | null | undefined, a: string) {
+  if (!r?.validos) return undefined
+  const [l, s] = r.candidatos
+  const margem = l.pct - (s?.pct ?? 0)
+  const forca = margem < 2 ? 30 : margem < 5 ? 50 : margem < 10 ? 72 : margem < 20 ? 88 : 100
+  return `color-mix(in srgb, ${CORES_CAT[l.sq === a ? 0 : 1]} ${forca}%, var(--map-empty))`
+}
+
+const deCand = (r: ResultadoAoVivo | null | undefined, sq: string) => r?.candidatos.find((c) => c.sq === sq)
+
+/** Municípios de uma UF ao vivo (atualiza a cada 60 s) e, ao clicar, zonas e seções do município. */
+function MunicipiosAoVivo({ uf, a, b, onFechar }: { uf: string; a: CandAoVivo; b: CandAoVivo; onFechar: () => void }) {
+  const cfg = useJSON<MunicipiosTSE>(URL_MUNICIPIOS)
+  const muns = useMemo(() => cfg.data?.abr.find((x) => x.cd === uf.toLowerCase())?.mu ?? [], [cfg.data, uf])
+  const porIbge = useMemo(() => new Map(muns.map((m) => [m.cdi, m])), [muns])
+  const urls = useMemo(() => Object.fromEntries(muns.map((m) => [m.cd, urlPresidenteMun(uf, m.cd)])), [muns, uf])
+  const vivo = useAoVivo(urls, { intervalo: 2 * INTERVALO_MS })
+  const [sel, setSel] = useState<string | null>(null)
+  const mun = sel ? porIbge.get(sel) : undefined
+  const r = mun ? vivo.dados[mun.cd] : undefined
+
+  const fechar = (
+    <button className="btn" onClick={onFechar}>
+      Fechar
+    </button>
+  )
+  return (
     <div className="grid g2" style={{ alignItems: 'start' }}>
-      <Card title="Quem lidera em cada estado" sub="Cor do candidato à frente; mais intensa quanto maior a vantagem (até 2, 5, 10, 20 p.p. ou mais).">
-        <BrazilMap
-          nivel="uf"
-          labels
-          fill={fill}
-          tooltip={(abr) => {
-            const r = uf(abr)
-            return (
-              <>
-                <div className="t">{UFS[abr]?.nome}</div>
-                {[a, b].map((c, i) => <TipRow key={c.sq} color={CORES_CAT[i]} label={c.urna} value={pct(de(r, c.sq)?.pct ?? 0)} />)}
-                <div className="tiny">{r ? `${pct(r.pctTotalizado)} das seções totalizadas` : 'Sem dados'}</div>
-              </>
-            )
-          }}
-        />
+      <Card
+        title={`Municípios — ${UFS[uf]?.nome ?? uf}`}
+        sub={vivo.carregado ? `${num(muns.length)} municípios · atualiza a cada 60 s. Clique num município para ver zonas e seções.` : `Consultando ${num(muns.length)} municípios no TSE…`}
+        actions={fechar}
+      >
+        {cfg.error ? (
+          <p className="muted small">Não foi possível carregar a lista de municípios do TSE.</p>
+        ) : (
+          <BrazilMap
+            nivel={uf}
+            height={520}
+            fill={(ibge) => {
+              const m = porIbge.get(ibge)
+              return m ? corLider(vivo.dados[m.cd], a.sq) : undefined
+            }}
+            onSelect={setSel}
+            selected={sel}
+            tooltip={(ibge) => {
+              const m = porIbge.get(ibge)
+              const rm = m ? vivo.dados[m.cd] : null
+              return (
+                <>
+                  <div className="t">{m ? titulo(m.nm) : ibge}</div>
+                  {[a, b].map((c, i) => <TipRow key={c.sq} color={CORES_CAT[i]} label={c.urna} value={pct(deCand(rm, c.sq)?.pct ?? 0)} />)}
+                  <div className="tiny">{rm ? `${pct(rm.pctTotalizado)} das seções totalizadas (${num(rm.secoesTotalizadas)} de ${num(rm.secoes)})` : 'Sem dados'}</div>
+                </>
+              )
+            }}
+          />
+        )}
         <Legend items={[a, b].map((c, i) => ({ key: c.urna, cor: CORES_CAT[i] }))} />
       </Card>
-      <Card title="Resultado por UF">
-        <div className="table-wrap" style={{ maxHeight: 620 }}>
-          <table>
-            <thead>
-              <tr>
-                <th>UF</th>
-                <th className="num">Totalizado</th>
-                <th className="num">{a.urna}</th>
-                <th className="num">{b.urna}</th>
-                <th className="num">Válidos</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ABR_PRESIDENTE.map((abr) => {
-                const r = uf(abr)
-                const lider = r?.validos ? r.candidatos[0]?.sq : null
-                return (
-                  <tr key={abr}>
-                    <td>{UFS[abr]?.nome ?? 'Exterior'}</td>
-                    <td className="num">{r ? pct(r.pctTotalizado) : '—'}</td>
-                    {[a, b].map((c) => (
-                      <td key={c.sq} className="num" style={{ fontWeight: lider === c.sq ? 700 : 400 }}>
-                        {r ? pct(de(r, c.sq)?.pct ?? 0) : '—'}
-                      </td>
-                    ))}
-                    <td className="num">{r ? num(r.validos) : '—'}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {mun ? (
+        <Card title={titulo(mun.nm)} sub={r ? <Totalizado r={r} /> : 'Sem dados do TSE ainda.'}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {r && <Duelo r={r} ordem={() => [deCand(r, a.sq) ?? { ...a, votos: 0, pct: 0 }, deCand(r, b.sq) ?? { ...b, votos: 0, pct: 0 }]} />}
+            {r && (
+              <div className="small muted">
+                Comparecimento {share(r.comparecimento, r.eleitorado)} · abstenção {share(r.abstencao, r.eleitorado)} · brancos e nulos {share(r.brancos + r.nulos, r.comparecimento)}
+              </div>
+            )}
+            <ZonasSecoes uf={uf} mun={mun.cd} />
+          </div>
+        </Card>
+      ) : (
+        <Card title="Zonas e seções">
+          <p className="muted small">Clique num município no mapa para ver o resultado, as zonas eleitorais e a situação de cada seção.</p>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+/** Zonas do município e situação (totalizada ou não) de cada seção da zona escolhida. */
+function ZonasSecoes({ uf, mun }: { uf: string; mun: string }) {
+  const cfg = useJSON<SecoesTSE>(urlSecoes(uf))
+  const zonas = useMemo(() => cfg.data?.abr.find((x) => x.cd === uf.toLowerCase())?.mu.find((m) => m.cd === mun)?.zon ?? [], [cfg.data, uf, mun])
+  const [escolhida, setZona] = useState<string | null>(null)
+  const zona = zonas.find((z) => z.cd === escolhida) ?? zonas[0]
+  if (cfg.error) return <p className="muted small">Lista de seções indisponível no TSE.</p>
+  if (!cfg.data) return <div className="spinner" />
+  if (!zona) return <p className="muted small">Nenhuma seção listada para este município.</p>
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div className="filterbar">
+        <span className="small muted">Zona</span>
+        {zonas.map((z) => (
+          <button key={z.cd} className={`chip ${z.cd === zona.cd ? 'on' : ''}`} onClick={() => setZona(z.cd)}>
+            {+z.cd} <span className="tiny">{z.sec.length} seções</span>
+          </button>
+        ))}
+      </div>
+      <SecoesZona key={zona.cd} uf={uf} mun={mun} zona={zona.cd} secoes={zona.sec.map((s) => s.ns)} />
+    </div>
+  )
+}
+
+function SecoesZona({ uf, mun, zona, secoes }: { uf: string; mun: string; zona: string; secoes: string[] }) {
+  const urls = useMemo(() => urlsSecoes(uf, mun, zona, secoes), [uf, mun, zona, secoes])
+  const vivo = useAoVivo(urls, { intervalo: 2 * INTERVALO_MS, parse: parseSecao })
+  const totalizadas = secoes.filter((s) => vivo.dados[s]?.final).length
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div className="small">
+        <b>{num(totalizadas)}</b> de {num(secoes.length)} seções da zona {+zona} totalizadas
+        {!vivo.carregado && <span className="tiny"> · consultando…</span>}
+      </div>
+      <div className="secoes">
+        {secoes.map((s) => {
+          const d = vivo.dados[s]
+          return (
+            <span key={s} className={`secao ${d?.final ? 'ok' : ''}`} title={`Seção ${+s}: ${d ? d.situacao || 'sem situação' : 'boletim não publicado (aguardando ou seção agregada)'}${d?.recebida ? ` · boletim recebido em ${d.recebida}` : ''}`}>
+              {+s}
+            </span>
+          )
+        })}
+      </div>
+      <div className="legend">
+        <span><i className="sw secao-sw ok" />Totalizada</span>
+        <span><i className="sw secao-sw" />Aguardando ou sem boletim próprio (seção agregada)</span>
+      </div>
     </div>
   )
 }
