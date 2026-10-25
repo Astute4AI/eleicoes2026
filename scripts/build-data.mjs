@@ -385,6 +385,13 @@ async function main() {
     ],
   })
 
+  // ---------------------------------------------------- locais/{UF}.json (local de votação de cada seção)
+  await completarLocais(presidente.locais)
+  for (const uf of UFS) {
+    const loc = presidente.locais[uf]
+    if (loc) await writeJSON(path.join(OUT, 'locais', `${uf}.json`), { locais: loc.lista, secoes: loc.secoes })
+  }
+
   if (!process.env.SKIP_GEO) await baixarMalhas()
   log('concluído')
 }
@@ -416,11 +423,13 @@ function resumoAbrangencia(j) {
 async function carregarPresidente(cands, municipios, munIndex) {
   const dir = await datasetDir(`votacao_secao_${ANO}_BR`, 'votacao_secao')
   const agg = {} // uf -> { cand: Map(sq->v), brancos, nulos, mun: Map(mi -> Map(sq->v)) }
+  const locais = {} // uf -> { idx: Map(mun|zona|local -> i), lista: [[nr, nome, endereço]], secoes: { 'mun-zona': { secao: i } } }
   let geracao = ''
   for await (const r of readCsv(path.join(dir, `votacao_secao_${ANO}_BR.csv`))) {
     if (r.CD_CARGO !== '1') continue
     geracao ||= `${r.DT_GERACAO} ${r.HH_GERACAO}`
     const uf = r.SG_UF
+    registrarLocal(locais, r, [+r.NR_LOCAL_VOTACAO, r.NM_LOCAL_VOTACAO, r.DS_LOCAL_VOTACAO_ENDERECO])
     const a = (agg[uf] ??= { cand: new Map(), brancos: 0, nulos: 0, mun: new Map() })
     const v = +r.QT_VOTOS || 0
     if (r.NR_VOTAVEL === '95') { a.brancos += v; continue }
@@ -432,7 +441,7 @@ async function carregarPresidente(cands, municipios, munIndex) {
     if (!m) a.mun.set(mi, (m = new Map()))
     m.set(r.SQ_CANDIDATO, (m.get(r.SQ_CANDIDATO) || 0) + v)
   }
-  if (!Object.keys(agg).length) { log('sem votação de Presidente'); return { resumo: null, municipios: {} } }
+  if (!Object.keys(agg).length) { log('sem votação de Presidente'); return { resumo: null, municipios: {}, locais: {} } }
   log('votação de Presidente por seção agregada')
 
   const deSecoes = (ufs) => {
@@ -506,7 +515,51 @@ async function carregarPresidente(cands, municipios, munIndex) {
     }
     porMun[uf] = { total, partidos, top, cand }
   }
-  return { resumo, municipios: porMun }
+  return { resumo, municipios: porMun, locais }
+}
+
+/** Associa a seção (município TSE + zona + seção) ao seu local de votação. */
+function registrarLocal(locais, r, dados) {
+  const loc = (locais[r.SG_UF] ??= { idx: new Map(), lista: [], secoes: {} })
+  const zona = (loc.secoes[`${+r.CD_MUNICIPIO}-${+r.NR_ZONA}`] ??= {})
+  const k = `${+r.CD_MUNICIPIO}|${+r.NR_ZONA}|${+r.NR_LOCAL_VOTACAO}`
+  let i = loc.idx.get(k)
+  if (i === undefined) {
+    i = loc.lista.length
+    loc.idx.set(k, i)
+    loc.lista.push(dados)
+  }
+  zona[+r.NR_SECAO] ??= i
+  return loc.lista[i]
+}
+
+/**
+ * Completa os locais com bairro e coordenadas do cadastro de locais de votação
+ * (eleitorado_local_votacao) e inclui as seções agregadas, que não aparecem na
+ * votação por seção. Opcional: se o arquivo não puder ser baixado, segue sem ele.
+ */
+async function completarLocais(locais) {
+  let dir
+  try {
+    dir = await datasetDir(`eleitorado_local_votacao_${ANO}`, 'eleitorado_locais_votacao')
+  } catch (e) {
+    log('cadastro de locais de votação indisponível — sem bairro/coordenadas:', e.message)
+    return
+  }
+  const csv = fs.readdirSync(dir).find((f) => f.endsWith('.csv'))
+  let n = 0
+  for await (const r of readCsv(path.join(dir, csv))) {
+    if (r.NR_TURNO && r.NR_TURNO !== '1') continue
+    if (!r.SG_UF || r.SG_UF === 'ZZ') continue
+    const item = registrarLocal(locais, r, [+r.NR_LOCAL_VOTACAO, r.NM_LOCAL_VOTACAO, r.DS_ENDERECO])
+    if (item.length > 3) continue
+    const lat = +String(r.NR_LATITUDE).replace(',', '.')
+    const lon = +String(r.NR_LONGITUDE).replace(',', '.')
+    const coord = lat && lon && lat !== -1 && lon !== -1
+    item.push(nulo(r.NM_BAIRRO) ? '' : r.NM_BAIRRO, coord ? Math.round(lat * 1e5) / 1e5 : null, coord ? Math.round(lon * 1e5) / 1e5 : null)
+    n++
+  }
+  log('locais de votação completados:', n)
 }
 
 /** Tenta carregar o 2º turno (Presidente e Governador) — retorna null até haver divulgação. */

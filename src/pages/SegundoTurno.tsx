@@ -331,7 +331,7 @@ function MunicipiosAoVivo({ uf, a, b, onFechar }: { uf: string; a: CandAoVivo; b
                 Comparecimento {share(r.comparecimento, r.eleitorado)} · abstenção {share(r.abstencao, r.eleitorado)} · brancos e nulos {share(r.brancos + r.nulos, r.comparecimento)}
               </div>
             )}
-            <ZonasSecoes uf={uf} mun={mun.cd} />
+            <ZonasSecoes uf={uf} mun={mun.cd} municipio={titulo(mun.nm)} />
           </div>
         </Card>
       ) : (
@@ -344,7 +344,7 @@ function MunicipiosAoVivo({ uf, a, b, onFechar }: { uf: string; a: CandAoVivo; b
 }
 
 /** Zonas do município e situação (totalizada ou não) de cada seção da zona escolhida. */
-function ZonasSecoes({ uf, mun }: { uf: string; mun: string }) {
+function ZonasSecoes({ uf, mun, municipio }: { uf: string; mun: string; municipio: string }) {
   const cfg = useJSON<SecoesTSE>(urlSecoes(uf))
   const zonas = useMemo(() => cfg.data?.abr.find((x) => x.cd === uf.toLowerCase())?.mu.find((m) => m.cd === mun)?.zon ?? [], [cfg.data, uf, mun])
   const [escolhida, setZona] = useState<string | null>(null)
@@ -362,15 +362,57 @@ function ZonasSecoes({ uf, mun }: { uf: string; mun: string }) {
           </button>
         ))}
       </div>
-      <SecoesZona key={zona.cd} uf={uf} mun={mun} zona={zona.cd} secoes={zona.sec.map((s) => s.ns)} />
+      <SecoesZona key={zona.cd} uf={uf} mun={mun} municipio={municipio} zona={zona.cd} secoes={zona.sec.map((s) => s.ns)} />
     </div>
   )
 }
 
-function SecoesZona({ uf, mun, zona, secoes }: { uf: string; mun: string; zona: string; secoes: string[] }) {
+/** public/data/locais/{UF}.json: locais [nº, nome, endereço, bairro?, lat?, lon?] e, por "mun-zona", seção → índice do local. */
+interface LocaisUF {
+  locais: [number, string, string, string?, (number | null)?, (number | null)?][]
+  secoes: Record<string, Record<string, number>>
+}
+
+function linkMapa(l: LocaisUF['locais'][number], municipio: string, uf: string) {
+  const [, nome, endereco, , lat, lon] = l
+  const q = lat != null && lon != null ? `${lat},${lon}` : `${nome}, ${endereco}, ${municipio} - ${uf}`
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(q)}`
+}
+
+function faixas(ns: number[]) {
+  const out: string[] = []
+  for (let i = 0; i < ns.length; i++) {
+    let j = i
+    while (j + 1 < ns.length && ns[j + 1] === ns[j] + 1) j++
+    out.push(j > i ? `${ns[i]}–${ns[j]}` : `${ns[i]}`)
+    i = j
+  }
+  return out.join(', ')
+}
+
+function SecoesZona({ uf, mun, municipio, zona, secoes }: { uf: string; mun: string; municipio: string; zona: string; secoes: string[] }) {
   const urls = useMemo(() => urlsSecoes(uf, mun, zona, secoes), [uf, mun, zona, secoes])
   const vivo = useAoVivo(urls, { intervalo: 2 * INTERVALO_MS, parse: parseSecao })
+  const loc = useJSON<LocaisUF>(`/data/locais/${uf}.json`)
+  const [sel, setSel] = useState<string | null>(null)
   const totalizadas = secoes.filter((s) => vivo.dados[s]?.final).length
+
+  const daZona = loc.data?.secoes[`${+mun}-${+zona}`]
+  const localDe = (s: string) => (daZona?.[+s] != null ? daZona[+s] : null)
+  // locais da zona com as seções de cada um
+  const locais = useMemo(() => {
+    const m = new Map<number, number[]>()
+    if (daZona) for (const s of secoes) {
+      const i = daZona[+s]
+      if (i != null) m.set(i, [...(m.get(i) ?? []), +s])
+    }
+    return [...m].map(([i, ns]) => ({ i, l: loc.data!.locais[i], ns: ns.sort((x, y) => x - y) })).sort((x, y) => x.ns[0] - y.ns[0])
+  }, [daZona, secoes, loc.data])
+
+  const localSel = sel ? localDe(sel) : null
+  const info = localSel != null ? locais.find((x) => x.i === localSel) : undefined
+  const dSel = sel ? vivo.dados[sel] : undefined
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div className="small">
@@ -380,16 +422,66 @@ function SecoesZona({ uf, mun, zona, secoes }: { uf: string; mun: string; zona: 
       <div className="secoes">
         {secoes.map((s) => {
           const d = vivo.dados[s]
+          const cls = ['secao', d?.final && 'ok', s === sel && 'sel', s !== sel && localSel != null && localDe(s) === localSel && 'mesmo'].filter(Boolean).join(' ')
           return (
-            <span key={s} className={`secao ${d?.final ? 'ok' : ''}`} title={`Seção ${+s}: ${d ? d.situacao || 'sem situação' : 'boletim não publicado (aguardando ou seção agregada)'}${d?.recebida ? ` · boletim recebido em ${d.recebida}` : ''}`}>
+            <button key={s} className={cls} onClick={() => setSel(s === sel ? null : s)} title={`Seção ${+s}: ${d ? d.situacao || 'sem situação' : 'boletim não publicado (aguardando ou seção agregada)'}${d?.recebida ? ` · boletim recebido em ${d.recebida}` : ''}`}>
               {+s}
-            </span>
+            </button>
           )
         })}
       </div>
       <div className="legend">
         <span><i className="sw secao-sw ok" />Totalizada</span>
         <span><i className="sw secao-sw" />Aguardando ou sem boletim próprio (seção agregada)</span>
+        <span className="tiny">Clique numa seção para ver onde ela fica.</span>
+      </div>
+
+      {sel && (
+        <div className="callout">
+          <b>Seção {+sel}</b> · zona {+zona} — {dSel ? dSel.situacao || 'sem situação' : 'boletim não publicado'}
+          {dSel?.recebida && ` · boletim recebido em ${dSel.recebida}`}
+          {info ? (
+            <LocalVotacao l={info.l} ns={info.ns} municipio={municipio} uf={uf} />
+          ) : (
+            <div className="small muted" style={{ marginTop: 4 }}>{loc.data ? 'Local de votação não encontrado no cadastro do TSE.' : 'Carregando locais de votação…'}</div>
+          )}
+        </div>
+      )}
+
+      {locais.length > 0 && (
+        <details>
+          <summary className="small" style={{ cursor: 'pointer' }}>
+            {num(locais.length)} locais de votação na zona {+zona}
+          </summary>
+          <ul className="list-reset" style={{ marginTop: 6 }}>
+            {locais.map(({ i, l, ns }) => (
+              <li key={i} className="person" style={{ cursor: 'pointer', background: i === localSel ? 'var(--accent-soft)' : undefined }} onClick={() => setSel(String(ns[0]).padStart(4, '0'))}>
+                <LocalVotacao l={l} ns={ns} municipio={municipio} uf={uf} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
+function LocalVotacao({ l, ns, municipio, uf }: { l: LocaisUF['locais'][number]; ns: number[]; municipio: string; uf: string }) {
+  const [nr, nome, endereco, bairro] = l
+  return (
+    <div className="small" style={{ marginTop: 4, flex: 1, minWidth: 0 }}>
+      <div>
+        <b>{titulo(nome)}</b> <span className="tiny">local nº {nr}</span>
+      </div>
+      <div className="muted">
+        {titulo(endereco)}
+        {bairro ? ` · ${titulo(bairro)}` : ''} · {municipio}/{uf}
+      </div>
+      <div className="tiny">
+        Seções {faixas(ns)} ·{' '}
+        <a href={linkMapa(l, municipio, uf)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+          ver no mapa
+        </a>
       </div>
     </div>
   )

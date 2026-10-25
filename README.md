@@ -7,7 +7,7 @@ Site em React (Vite + TypeScript) para analisar os eleitos nas Eleições Gerais
 | Rota | O que faz |
 |---|---|
 | `/` Painel | KPIs, Presidente, governadores, hemiciclos da Câmara e do Senado, gênero, raça e espectro por cargo |
-| `/segundo-turno` | Apuração do 2º turno (Presidente e governadores) ao vivo, lida no navegador direto de `resultados.tse.jus.br`; a partir das 17h de 25/10 atualiza a cada 30 s até a totalização final. Clique numa UF para ver os municípios (ao vivo) e, num município, a situação de cada seção por zona |
+| `/segundo-turno` | Apuração do 2º turno (Presidente e governadores) ao vivo, lida no navegador direto de `resultados.tse.jus.br`; a partir das 17h de 25/10 atualiza a cada 30 s até a totalização final. Clique numa UF para ver os municípios (ao vivo) e, num município, a situação de cada seção por zona e o local de votação (nome, endereço e link para o mapa) |
 | `/explorar` | Consulta dinâmica: filtros (cargo, situação, gênero, raça, espectro, partido, federação, UF, região, idade, escolaridade, ocupação) + “agrupar por” e “dividir por”. Tabela e CSV. A consulta fica na URL. |
 | `/mapa` | Mapa por UF (recorte filtrado, saldo ideológico, Presidente, Governador) → clique para ver municípios por cargo, candidato ou partido |
 | `/presidente` | 1º turno nacional, por UF, por região e exterior; 2º turno quando disponível |
@@ -25,6 +25,7 @@ npm run data      # baixa do TSE/IBGE (~1,5 GB de zips na 1ª vez) e regenera pu
 
 - Os arquivos brutos ficam em `.cache/tse` (ignorado pelo git). Para usar outra pasta: `TSE_CACHE=/caminho npm run data`.
 - Fontes: Portal de Dados Abertos do TSE (`consulta_cand`, `votacao_candidato_munzona`, `consulta_vagas`, `votacao_secao_BR` para Presidente), API de divulgação `resultados.tse.jus.br` (comparecimento/abstenção e 2º turno) e API de malhas do IBGE.
+- `public/data/locais/{UF}.json` liga cada seção ao seu local de votação (da votação por seção; bairro e coordenadas vêm do cadastro `eleitorado_local_votacao` quando o CDN permite o download).
 - A API de divulgação aplica limite de taxa (HTTP 429). O script espaça as requisições, faz backoff e guarda as respostas em cache.
 - **2º turno (25/10/2026):** rode `npm run data` de novo depois da totalização. O script consulta as eleições 6258/6260 e atualiza a situação de Presidente e dos governadores. Para a votação municipal do 2º turno, apague `.cache/tse/votacao_secao_2026_BR*` e `.cache/tse/consulta_cand_2026*` para baixar as versões novas.
 
