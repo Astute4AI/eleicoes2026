@@ -25,7 +25,11 @@ export default function Painel() {
   )
   const mulheres = eleitos.filter(ehMulher).length
   const negros = eleitos.filter(ehNegro).length
-  const estados2t = new Set(turno2.filter((c) => c.cargo === 3).map((c) => c.uf))
+  // estados com 2º turno: pela situação enquanto a disputa está aberta, pelo resumo do 2º turno depois
+  const estados2t = new Set([...turno2.filter((c) => c.cargo === 3).map((c) => c.uf), ...Object.keys(meta.segundoTurno?.governador ?? {})])
+  const t2pres = meta.segundoTurno?.presidente
+  const eleitoPres = t2pres && t2pres.validos > 0 ? t2pres.candidatos.find((c) => /^eleito/i.test(c.situacao)) : undefined
+  const encerrado = !turno2.length
 
   const camara = eleitos.filter((c) => c.cargo === 6)
   const senado = eleitos.filter((c) => c.cargo === 5)
@@ -52,7 +56,7 @@ export default function Painel() {
     <>
       <div className="page-head">
         <div>
-          <h1>Eleições Gerais {meta.ano} — resultado do 1º turno</h1>
+          <h1>Eleições Gerais {meta.ano} — {encerrado ? 'resultado final' : 'resultado do 1º turno'}</h1>
           <p>
             Quem foi eleito para Presidente, Governador, Senado, Câmara, Assembleias e Câmara Legislativa do DF, segundo os dados
             oficiais do TSE. Use <Link to="/explorar">Explorar</Link> para cruzar gênero, raça, partido, espectro político e
@@ -62,10 +66,18 @@ export default function Painel() {
       </div>
 
       <div className="grid g4">
-        <Stat label="Eleitos no 1º turno" value={num(eleitos.length)} sub={`de ${num(vagasTotais)} vagas · ${num(turno2.length / 2)} vagas vão ao 2º turno`} />
+        <Stat
+          label={encerrado ? 'Eleitos' : 'Eleitos no 1º turno'}
+          value={num(eleitos.length)}
+          sub={`de ${num(vagasTotais)} vagas · ${encerrado ? `${num(estados2t.size + 1)} definidas no 2º turno` : `${num(turno2.length / 2)} vagas vão ao 2º turno`}`}
+        />
         <Stat label="Mulheres eleitas" value={share(mulheres, eleitos.length)} sub={`${num(mulheres)} eleitas`} />
         <Stat label="Pretos e pardos eleitos" value={share(negros, eleitos.length)} sub={`${num(negros)} eleitos autodeclarados`} />
-        <Stat label="2º turno em 25/10" value={`${estados2t.size + 1} disputas`} sub={`Presidente + Governador em ${[...estados2t].sort().join(', ')}`} />
+        <Stat
+          label="2º turno em 25/10"
+          value={eleitoPres ? `${eleitoPres.urna} eleito` : `${estados2t.size + 1} disputas`}
+          sub={eleitoPres ? `${pct(eleitoPres.pct)} dos válidos · Governador em ${[...estados2t].sort().join(', ')}` : `Presidente + Governador em ${[...estados2t].sort().join(', ')}`}
+        />
       </div>
 
       <div className="grid g2">
@@ -87,11 +99,14 @@ export default function Painel() {
               }))}
             />
             <p className="tiny" style={{ marginTop: 10 }}>
-              Cor = espectro do partido. {pres.candidatos.filter((c) => /2/.test(c.situacao)).map((c) => c.urna).join(' e ')} disputam o 2º turno.
+              Cor = espectro do partido.{' '}
+              {eleitoPres
+                ? `${eleitoPres.urna} foi eleito no 2º turno com ${pct(eleitoPres.pct)} dos votos válidos.`
+                : `${pres.candidatos.filter((c) => /2/.test(c.situacao)).map((c) => c.urna).join(' e ')} disputam o 2º turno.`}
             </p>
           </Card>
         )}
-        <Card title="Governadores" sub={`${eleitos.filter((c) => c.cargo === 3).length} eleitos no 1º turno · ${estados2t.size} estados no 2º turno`} actions={<Link to="/mapa?cargos=3" className="small">Ver no mapa →</Link>}>
+        <Card title="Governadores" sub={`${eleitos.filter((c) => c.cargo === 3 && !estados2t.has(c.uf)).length} eleitos no 1º turno · ${estados2t.size} ${encerrado ? 'decididos' : 'estados'} no 2º turno`} actions={<Link to="/mapa?cargos=3" className="small">Ver no mapa →</Link>}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: '2px 16px', maxHeight: 330, overflow: 'auto' }}>
             {Object.keys(UFS).map((uf) => {
               const g = candidatos.filter((c) => c.cargo === 3 && c.uf === uf && (c.situacao === 'ELEITO' || c.situacao === '2º TURNO'))

@@ -40,7 +40,10 @@ export default function Presidente() {
         <div>
           <h1>Presidente da República</h1>
           <p>
-            {a.urna} ({a.partido}) e {b.urna} ({b.partido}) disputam o 2º turno em {meta.dataSegundoTurno}. Totalização do 1º turno: {br.totalizacao}.
+            {t2?.candidatos.some((c) => /^eleito/i.test(c.situacao))
+              ? `${t2.candidatos.find((c) => /^eleito/i.test(c.situacao))!.urna} foi eleito no 2º turno, em ${meta.dataSegundoTurno}, contra ${t2.candidatos.find((c) => !/^eleito/i.test(c.situacao))?.urna ?? ''}.`
+              : `${a.urna} (${a.partido}) e ${b.urna} (${b.partido}) disputam o 2º turno em ${meta.dataSegundoTurno}.`}{' '}
+            Totalização do 1º turno: {br.totalizacao}.
           </p>
         </div>
       </div>
