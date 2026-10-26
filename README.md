@@ -8,6 +8,7 @@ Site em React (Vite + TypeScript) para analisar os eleitos nas Eleições Gerais
 |---|---|
 | `/` Painel | KPIs, Presidente, governadores, hemiciclos da Câmara e do Senado, gênero, raça e espectro por cargo |
 | `/segundo-turno` | Apuração do 2º turno (Presidente e governadores) ao vivo, lida no navegador direto de `resultados.tse.jus.br`; a partir das 17h de 25/10 atualiza a cada 30 s até a totalização final. Clique numa UF para ver os municípios (ao vivo) e, num município, a situação de cada seção por zona e o local de votação (nome, endereço e link para o mapa) |
+| `/variacao` | Votos ganhos e perdidos por cada finalista a Presidente do 1º para o 2º turno, em mapa de círculos proporcionais (Brasil ou UF) e ranking. Por município até o TSE publicar os boletins de urna do 2º turno (`bweb_2t`); depois, por zona eleitoral (zona posicionada no centro dos seus locais de votação) |
 | `/explorar` | Consulta dinâmica: filtros (cargo, situação, gênero, raça, espectro, partido, federação, UF, região, idade, escolaridade, ocupação) + “agrupar por” e “dividir por”. Tabela e CSV. A consulta fica na URL. |
 | `/mapa` | Mapa por UF (recorte filtrado, saldo ideológico, Presidente, Governador) → clique para ver municípios por cargo, candidato ou partido |
 | `/presidente` | 1º turno nacional, por UF, por região e exterior; 2º turno quando disponível |

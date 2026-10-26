@@ -250,6 +250,8 @@ tr.clickable { cursor: pointer; }
 .map path.hover { stroke: var(--map-focus); stroke-width: 1.5; }
 .map path.sel { stroke: var(--map-focus); stroke-width: 2; }
 .map text { font-size: 10px; fill: var(--text); pointer-events: none; font-weight: 600; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-linejoin: round; }
+.map circle.bolha { fill-opacity: 0.62; stroke: var(--surface); stroke-width: 0.6; vector-effect: non-scaling-stroke; cursor: pointer; }
+.map circle.bolha:hover { fill-opacity: 0.95; stroke: var(--map-focus); stroke-width: 1.5; }
 .map-scale { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; color: var(--text-2); }
 .map-scale .bar { height: 10px; flex: 1; max-width: 220px; border-radius: 3px; }
 

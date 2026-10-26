@@ -1,13 +1,12 @@
 name: Atualizar dados do TSE
 
 # Regenera public/data com os arquivos do TSE e commita se algo mudou;
-# o push na main dispara o deploy da Vercel. Ativo até a totalização do
-# 2º turno (25/10/2026) — depois disso o job encerra sem fazer nada.
+# o push na main dispara o deploy da Vercel. Ativo até 15/11/2026, para pegar
+# os boletins de urna do 2º turno (variação por zona) quando o TSE publicar —
+# depois disso o job encerra sem fazer nada.
 on:
   schedule:
     - cron: '0 */3 * * *'          # a cada 3 h
-    - cron: '*/20 20-23 25 10 *'   # noite do 2º turno (17h–21h BRT), a cada 20 min
-    - cron: '*/20 0-3 26 10 *'     # 21h–01h BRT
   workflow_dispatch:
 
 permissions:
@@ -20,12 +19,12 @@ concurrency:
 jobs:
   atualizar:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - name: Verifica janela
         id: janela
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%Y%m%d)" -gt 20261027 ]; then
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$(date -u +%Y%m%d)" -gt 20261115 ]; then
             echo "ativo=false" >> "$GITHUB_OUTPUT"
           else
             echo "ativo=true" >> "$GITHUB_OUTPUT"
@@ -44,7 +43,8 @@ jobs:
         if: steps.janela.outputs.ativo == 'true'
         run: |
           npm ci
-          npm run data
+          # as malhas do IBGE já estão em public/geo e a API delas falha a partir dos runners
+          SKIP_GEO=1 npm run data
           npm run build
 
       - name: Commit e push
