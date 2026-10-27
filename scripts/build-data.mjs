@@ -395,8 +395,13 @@ async function main() {
   }
 
   // ---------------------------------------------------- variacao.json (1º → 2º turno dos finalistas a Presidente)
-  const variacao = await carregarVariacao(presidente, municipios, cadastro?.centros)
+  const boletins = cadastro ? await boletins2t() : null
+  const variacao = await carregarVariacao(presidente, municipios, cadastro?.centros, boletins?.zonas)
   if (variacao) await writeJSON(path.join(OUT, 'variacao.json'), variacao)
+
+  // ---------------------------------------------------- secoes.json (seções com resultado atípico entre os turnos)
+  const secoes = boletins ? compararSecoes(presidente, boletins.secoes, cadastro) : null
+  if (secoes) await writeJSON(path.join(OUT, 'secoes.json'), secoes)
 
   if (!process.env.SKIP_GEO) await baixarMalhas()
   log('concluído')
@@ -431,6 +436,8 @@ async function carregarPresidente(cands, municipios, munIndex) {
   const agg = {} // uf -> { cand: Map(sq->v), brancos, nulos, mun: Map(mi -> Map(sq->v)) }
   const locais = {} // uf -> { idx: Map(mun|zona|local -> i), lista: [[nr, nome, endereço]], secoes: { 'mun-zona': { secao: i } } }
   const zonas = {} // 'UF|zona' -> { votos: { nr: v }, validos, municipios: Set }
+  const secoes = new Map() // 'UF|mun|zona|seção' -> { votos: { nr: v }, total }
+  const nomesMun = new Map() // 'UF|mun' -> nome (inclui o exterior)
   let geracao = ''
   for await (const r of readCsv(path.join(dir, `votacao_secao_${ANO}_BR.csv`))) {
     if (r.CD_CARGO !== '1') continue
@@ -439,6 +446,12 @@ async function carregarPresidente(cands, municipios, munIndex) {
     registrarLocal(locais, r, [+r.NR_LOCAL_VOTACAO, r.NM_LOCAL_VOTACAO, r.DS_LOCAL_VOTACAO_ENDERECO])
     const a = (agg[uf] ??= { cand: new Map(), brancos: 0, nulos: 0, mun: new Map() })
     const v = +r.QT_VOTOS || 0
+    const ks = chaveSecao(uf, r.CD_MUNICIPIO, r.NR_ZONA, r.NR_SECAO)
+    let s = secoes.get(ks)
+    if (!s) secoes.set(ks, (s = { votos: {}, total: 0 }))
+    s.total += v
+    s.votos[r.NR_VOTAVEL] = (s.votos[r.NR_VOTAVEL] || 0) + v
+    if (!nomesMun.has(`${uf}|${+r.CD_MUNICIPIO}`)) nomesMun.set(`${uf}|${+r.CD_MUNICIPIO}`, titleCase(r.NM_MUNICIPIO))
     if (r.NR_VOTAVEL === '95') { a.brancos += v; continue }
     if (r.NR_VOTAVEL === '96' || !cands.has(r.SQ_CANDIDATO)) { a.nulos += v; continue }
     a.cand.set(r.SQ_CANDIDATO, (a.cand.get(r.SQ_CANDIDATO) || 0) + v)
@@ -449,7 +462,7 @@ async function carregarPresidente(cands, municipios, munIndex) {
     if (!m) a.mun.set(mi, (m = new Map()))
     m.set(r.SQ_CANDIDATO, (m.get(r.SQ_CANDIDATO) || 0) + v)
   }
-  if (!Object.keys(agg).length) { log('sem votação de Presidente'); return { resumo: null, municipios: {}, locais: {}, zonas: {} } }
+  if (!Object.keys(agg).length) { log('sem votação de Presidente'); return { resumo: null, municipios: {}, locais: {}, zonas: {}, secoes, nomesMun } }
   log('votação de Presidente por seção agregada')
 
   const deSecoes = (ufs) => {
@@ -523,8 +536,10 @@ async function carregarPresidente(cands, municipios, munIndex) {
     }
     porMun[uf] = { total, partidos, top, cand }
   }
-  return { resumo, municipios: porMun, locais, zonas }
+  return { resumo, municipios: porMun, locais, zonas, secoes, nomesMun }
 }
+
+const chaveSecao = (uf, mun, zona, secao) => `${uf}|${+mun}|${+zona}|${+secao}`
 
 /** Soma votos nominais de Presidente na zona eleitoral (zonas são numeradas por UF). */
 function somarZona(zonas, uf, r, nr, v) {
@@ -567,6 +582,7 @@ async function carregarLocaisCadastro() {
   }
   const porTurno = { 1: {}, 2: {} }
   const centros = { 1: {}, 2: {} } // 'UF|zona' -> [Σ lat·eleitores, Σ lon·eleitores, Σ eleitores]
+  const agregadas = [] // [seção, seção principal] em qualquer dos turnos
   const coord = (v) => {
     const n = +String(v).replace(',', '.')
     return n && n !== -1 ? Math.round(n * 1e5) / 1e5 : null
@@ -575,6 +591,9 @@ async function carregarLocaisCadastro() {
     const locais = porTurno[r.NR_TURNO]
     if (!locais || !r.SG_UF || r.SG_UF === 'ZZ') continue
     const principal = +r.NR_SECAO_PRINCIPAL > 0 ? +r.NR_SECAO_PRINCIPAL : 0
+    if (principal && principal !== +r.NR_SECAO) {
+      agregadas.push([chaveSecao(r.SG_UF, r.CD_MUNICIPIO, r.NR_ZONA, r.NR_SECAO), chaveSecao(r.SG_UF, r.CD_MUNICIPIO, r.NR_ZONA, principal)])
+    }
     const [lat, lon, eleitores] = [coord(r.NR_LATITUDE), coord(r.NR_LONGITUDE), +r.QT_ELEITOR_SECAO || 1]
     if (lat != null && lon != null) {
       const c = (centros[r.NR_TURNO][`${r.SG_UF}|${+r.NR_ZONA}`] ??= [0, 0, 0])
@@ -591,7 +610,7 @@ async function carregarLocaisCadastro() {
   const turno = Object.keys(porTurno[2]).length ? 2 : 1
   log(`locais de votação do cadastro (${turno}º turno) carregados`)
   const centro = Object.fromEntries(Object.entries(centros[turno]).map(([k, [la, lo, n]]) => [k, [Math.round((la / n) * 1e4) / 1e4, Math.round((lo / n) * 1e4) / 1e4]]))
-  return { locais: porTurno[turno], centros: centro }
+  return { locais: porTurno[turno], centros: centro, agregadas }
 }
 
 /** Tenta carregar o 2º turno (Presidente e Governador) — retorna null até haver divulgação. */
@@ -625,14 +644,13 @@ async function carregarSegundoTurno(cands) {
  * ou, até lá, por município (arquivos municipais da divulgação de resultados).
  * Linhas por UF: [id, nome, lat, lon, a1, a2, b1, b2, válidos1, válidos2].
  */
-async function carregarVariacao(presidente, municipios, centros) {
+async function carregarVariacao(presidente, municipios, centros, zonas2) {
   const br = presidente.resumo?.br
   if (!br || br.candidatos.length < 2) return null
   const [a, b] = br.candidatos.slice(0, 2)
   const candidatos = [a, b].map(({ sq, nr, urna, partido }) => ({ sq, nr, urna, partido }))
 
-  const zonas2 = centros ? await votosZona2t([a.nr, b.nr]) : null
-  if (zonas2) {
+  if (zonas2 && centros) {
     const uf = {}
     for (const [k, z1] of Object.entries(presidente.zonas)) {
       const z2 = zonas2[k]
@@ -672,8 +690,11 @@ async function carregarVariacao(presidente, municipios, centros) {
   return { nivel: 'municipio', candidatos, fonte: 'Votação por seção do 1º turno e divulgação de resultados do 2º turno', uf }
 }
 
-/** Soma por zona os votos nominais de Presidente nos boletins de urna do 2º turno; null se ainda não publicados. */
-async function votosZona2t(nrs) {
+/**
+ * Votos de Presidente nos boletins de urna do 2º turno, por zona e por seção; null se ainda não publicados.
+ * Seções: 'UF|mun|zona|seção' -> { aptos, comparecimento, votos: { nr: v }, validos, brancos, nulos, agregadas, urna }.
+ */
+async function boletins2t() {
   let recursos
   try {
     const pkg = await getJSON(`https://dadosabertos.tse.jus.br/api/3/action/package_show?id=resultados-${ANO}-boletim-de-urna`, { cache: false, retries: 2 })
@@ -688,7 +709,8 @@ async function votosZona2t(nrs) {
     return null
   }
   const zonas = {}
-  for (const uf of UFS) {
+  const secoes = new Map()
+  for (const uf of [...UFS, ...(porUF.has('ZZ') ? ['ZZ'] : [])]) {
     const url = porUF.get(uf)
     const nome = path.basename(url, '.zip')
     const dir = path.join(CACHE, nome)
@@ -699,17 +721,130 @@ async function votosZona2t(nrs) {
     }
     const csv = fs.readdirSync(dir).find((f) => f.endsWith('.csv'))
     for await (const r of readCsv(path.join(dir, csv))) {
-      // nominais de Presidente (CD_TIPO_VOTAVEL 1 = nominal)
-      if (r.CD_CARGO_PERGUNTA !== '1' || r.CD_TIPO_VOTAVEL !== '1') continue
-      const nr = +r.NR_VOTAVEL
-      const z = (zonas[`${uf}|${+r.NR_ZONA}`] ??= { votos: {}, validos: 0 })
+      if (r.CD_CARGO_PERGUNTA !== '1') continue
+      const k = chaveSecao(uf, r.CD_MUNICIPIO, r.NR_ZONA, r.NR_SECAO)
+      let s = secoes.get(k)
+      if (!s) {
+        secoes.set(k, (s = {
+          aptos: +r.QT_APTOS || 0, comparecimento: +r.QT_COMPARECIMENTO || 0, votos: {}, validos: 0, brancos: 0, nulos: 0,
+          agregadas: nulo(r.DS_SECOES_AGREGADAS) ? [] : (r.DS_SECOES_AGREGADAS.match(/\d+/g) ?? []).map(Number),
+          urna: r.DS_TIPO_URNA,
+        }))
+      }
       const v = +r.QT_VOTOS || 0
-      if (nrs.includes(nr)) z.votos[nr] = (z.votos[nr] || 0) + v
+      // CD_TIPO_VOTAVEL: 1 nominal, 2 branco, 3 nulo
+      if (r.CD_TIPO_VOTAVEL === '2') { s.brancos += v; continue }
+      if (r.CD_TIPO_VOTAVEL !== '1') { s.nulos += v; continue }
+      const nr = +r.NR_VOTAVEL
+      s.votos[nr] = (s.votos[nr] || 0) + v
+      s.validos += v
+      if (uf === 'ZZ') continue
+      const z = (zonas[`${uf}|${+r.NR_ZONA}`] ??= { votos: {}, validos: 0 })
+      z.votos[nr] = (z.votos[nr] || 0) + v
       z.validos += v
     }
     log('boletins de urna do 2º turno lidos', uf)
   }
-  return zonas
+  return { zonas, secoes }
+}
+
+/** Raiz de cada seção num conjunto de seções que somam votos juntas (agregadas à principal em algum turno). */
+function gruposDeSecoes(pares) {
+  const pai = new Map()
+  const raiz = (k) => {
+    let r = k
+    while (pai.has(r) && pai.get(r) !== r) r = pai.get(r)
+    pai.set(k, r)
+    return r
+  }
+  for (const [a, b] of pares) {
+    const [x, y] = [raiz(a), raiz(b)]
+    if (x !== y) pai.set(x, y)
+  }
+  return raiz
+}
+
+/**
+ * Seções com resultado atípico do 1º para o 2º turno entre os finalistas a Presidente:
+ * finalista que zerou ou que saiu do zero, unanimidade no 2º turno e viradas de 25 p.p. ou mais
+ * na divisão dos votos entre os dois.
+ * Seções agregadas em qualquer dos turnos são comparadas juntas.
+ * Linhas: [uf, mun, município, zona, seções, local, endereço, bairro, lat, lon, aptos2,
+ *          comparecimento1, comparecimento2, a1, a2, b1, b2, válidos1, válidos2, tipo de urna no 2º turno].
+ */
+function compararSecoes(presidente, secoes2, cadastro) {
+  const br = presidente.resumo?.br
+  if (!br || br.candidatos.length < 2 || !presidente.secoes.size) return null
+  const [A, B] = br.candidatos.slice(0, 2).map((c) => c.nr)
+
+  const pares = [...cadastro.agregadas]
+  for (const [k, s] of secoes2) {
+    const [uf, m, z] = k.split('|')
+    for (const ag of s.agregadas) pares.push([chaveSecao(uf, m, z, ag), k])
+  }
+  const raiz = gruposDeSecoes(pares)
+  const grupos = new Map()
+  const grupo = (k) => {
+    const r = raiz(k)
+    let g = grupos.get(r)
+    if (!g) grupos.set(r, (g = { secoes: new Set(), v1: {}, total1: 0, v2: {}, aptos2: 0, comp2: 0, validos2: 0, urnas: new Set(), tem1: false, tem2: false }))
+    g.secoes.add(+k.split('|')[3])
+    return g
+  }
+  for (const [k, s] of presidente.secoes) {
+    const g = grupo(k)
+    g.tem1 = true
+    g.total1 += s.total
+    for (const [nr, v] of Object.entries(s.votos)) g.v1[nr] = (g.v1[nr] || 0) + v
+  }
+  for (const [k, s] of secoes2) {
+    const g = grupo(k)
+    g.tem2 = true
+    s.agregadas.forEach((ag) => g.secoes.add(ag))
+    g.aptos2 += s.aptos
+    g.comp2 += s.comparecimento
+    g.validos2 += s.validos
+    g.urnas.add(s.urna)
+    for (const [nr, v] of Object.entries(s.votos)) g.v2[nr] = (g.v2[nr] || 0) + v
+  }
+
+  const local = (uf, m, z, nums) => {
+    const loc = cadastro.locais[uf]
+    const daZona = loc?.secoes[`${m}-${z}`]
+    for (const s of nums) {
+      const v = daZona?.[s]
+      if (v === undefined) continue
+      const [, nome, endereco, bairro, lat, lon] = loc.lista[Array.isArray(v) ? v[0] : v]
+      return [nome, endereco, bairro, lat, lon]
+    }
+    return ['', '', '', null, null]
+  }
+
+  const linhas = []
+  let comparadas = 0
+  for (const [k, g] of grupos) {
+    if (!g.tem1 || !g.tem2) continue
+    comparadas++
+    const val1 = Object.entries(g.v1).reduce((t, [nr, v]) => (nr === '95' || nr === '96' ? t : t + v), 0)
+    const [a1, b1, a2, b2] = [g.v1[A] || 0, g.v1[B] || 0, g.v2[A] || 0, g.v2[B] || 0]
+    const val2 = g.validos2
+    const zerou = (a1 > 0 && a2 === 0) || (b1 > 0 && b2 === 0)
+    const surgiu = (a1 === 0 && a2 >= 10) || (b1 === 0 && b2 >= 10)
+    const unanime = val2 >= 30 && (a2 === val2 || b2 === val2)
+    // fatia de A nos votos dos dois finalistas (votos de terceiros no 1º turno não contam como virada)
+    const virada = a1 + b1 >= 50 && a2 + b2 >= 50 && Math.abs(a2 / (a2 + b2) - a1 / (a1 + b1)) >= 0.25
+    if (!zerou && !surgiu && !unanime && !virada) continue
+    const [uf, m, z] = k.split('|')
+    const nums = [...g.secoes].sort((x, y) => x - y)
+    linhas.push([
+      uf, +m, presidente.nomesMun.get(`${uf}|${+m}`) ?? '', +z, nums.join(', '), ...local(uf, +m, +z, nums), g.aptos2,
+      g.total1, g.comp2, a1, a2, b1, b2, val1, val2, [...g.urnas].join(', '),
+    ])
+  }
+  linhas.sort((x, y) => x[0].localeCompare(y[0]) || x[1] - y[1] || x[3] - y[3])
+  log(`seções comparadas entre os turnos: ${comparadas} · com resultado atípico: ${linhas.length}`)
+  const candidatos = br.candidatos.slice(0, 2).map(({ nr, urna, partido }) => ({ nr, urna, partido }))
+  return { candidatos, comparadas, fonte: 'Votação por seção do 1º turno e boletins de urna (bweb) do 2º turno', linhas }
 }
 
 /** Centroide (lon, lat) de cada município a partir das malhas em public/geo/mun. */

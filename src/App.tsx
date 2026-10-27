@@ -10,6 +10,7 @@ const Candidatos = lazy(() => import('./pages/Candidatos'))
 const Presidente = lazy(() => import('./pages/Presidente'))
 const SegundoTurno = lazy(() => import('./pages/SegundoTurno'))
 const Variacao = lazy(() => import('./pages/Variacao'))
+const Secoes = lazy(() => import('./pages/Secoes'))
 const Partidos = lazy(() => import('./pages/Partidos'))
 const Metodologia = lazy(() => import('./pages/Metodologia'))
 
@@ -17,6 +18,7 @@ const LINKS = [
   ['/', 'Painel'],
   ['/segundo-turno', '2º turno'],
   ['/variacao', 'Variação 1º→2º'],
+  ['/secoes', 'Seções atípicas'],
   ['/explorar', 'Explorar'],
   ['/mapa', 'Mapa'],
   ['/presidente', 'Presidente'],
@@ -84,6 +86,7 @@ export default function App() {
             <Route path="/mapa" element={<Mapa />} />
             <Route path="/segundo-turno" element={<SegundoTurno />} />
             <Route path="/variacao" element={<Variacao />} />
+            <Route path="/secoes" element={<Secoes />} />
             <Route path="/presidente" element={<Presidente />} />
             <Route path="/partidos" element={<Partidos />} />
             <Route path="/candidatos" element={<Candidatos />} />
