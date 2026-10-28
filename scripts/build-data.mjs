@@ -274,7 +274,8 @@ async function main() {
     let semMun = 0
     for await (const r of readCsv(file)) {
       const cargo = +r.CD_CARGO
-      if (!CARGOS[cargo]) continue
+      // o arquivo traz os dois turnos; o 2º turno vem da divulgação de resultados
+      if (!CARGOS[cargo] || r.NR_TURNO !== '1') continue
       const mi = munIndex[uf].get(+r.CD_MUNICIPIO)
       const votos = +r.QT_VOTOS_NOMINAIS_VALIDOS || 0
       const c = cands.get(r.SQ_CANDIDATO)
@@ -440,7 +441,7 @@ async function carregarPresidente(cands, municipios, munIndex) {
   const nomesMun = new Map() // 'UF|mun' -> nome (inclui o exterior)
   let geracao = ''
   for await (const r of readCsv(path.join(dir, `votacao_secao_${ANO}_BR.csv`))) {
-    if (r.CD_CARGO !== '1') continue
+    if (r.CD_CARGO !== '1' || r.NR_TURNO !== '1') continue
     geracao ||= `${r.DT_GERACAO} ${r.HH_GERACAO}`
     const uf = r.SG_UF
     registrarLocal(locais, r, [+r.NR_LOCAL_VOTACAO, r.NM_LOCAL_VOTACAO, r.DS_LOCAL_VOTACAO_ENDERECO])
@@ -698,7 +699,8 @@ async function boletins2t() {
   let recursos
   try {
     const pkg = await getJSON(`https://dadosabertos.tse.jus.br/api/3/action/package_show?id=resultados-${ANO}-boletim-de-urna`, { cache: false, retries: 2 })
-    recursos = pkg?.result?.resources?.map((r) => r.url).filter((u) => /bweb_2t_[A-Z]{2}_\d+\.zip$/.test(u)) ?? []
+    // o catálogo às vezes aponta só para o .sha512 (RR em 2026); o zip fica no mesmo caminho
+    recursos = pkg?.result?.resources?.map((r) => r.url.replace(/\.sha512$/, '')).filter((u) => /bweb_2t_[A-Z]{2}_\d+\.zip$/.test(u)) ?? []
   } catch (e) {
     log('catálogo de dados abertos indisponível:', e.message)
     return null
